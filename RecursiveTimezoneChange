@@ -1,0 +1,59 @@
+# Connect to Exchange Online
+Connect-ExchangeOnline -UserPrincipalName you@yourcompany.com
+
+# Target time zone
+$desiredTimeZone = "GMT Standard Time" # Europe/London
+
+# Time zone to match (UTC-8 is "Pacific Standard Time")
+$targetCurrentTimeZone = "Pacific Standard Time"
+
+# Get all user mailboxes
+$mailboxes = Get-Mailbox -ResultSize Unlimited -RecipientTypeDetails UserMailbox
+
+# Array to track users to update
+$usersToUpdate = @()
+
+# First pass: identify users needing update
+foreach ($mailbox in $mailboxes) {
+    $regionalConfig = Get-MailboxRegionalConfiguration -Identity $mailbox.UserPrincipalName
+    if ($regionalConfig.TimeZone -eq $targetCurrentTimeZone) {
+        $usersToUpdate += [PSCustomObject]@{
+            UserPrincipalName = $mailbox.UserPrincipalName
+            CurrentTimeZone   = $regionalConfig.TimeZone
+            NewTimeZone       = $desiredTimeZone
+        }
+    }
+}
+
+# Report users to be updated
+if ($usersToUpdate.Count -eq 0) {
+    Write-Host "No users found with time zone set to '$targetCurrentTimeZone'. No changes will be made." -ForegroundColor Green
+} else {
+    Write-Host "`nUsers to be updated:" -ForegroundColor Yellow
+    $usersToUpdate | Format-Table UserPrincipalName, CurrentTimeZone, NewTimeZone
+
+    # Confirm before proceeding
+    $confirmation = Read-Host "`nProceed to update these $($usersToUpdate.Count) users? (Y/N)"
+    if ($confirmation -eq "Y") {
+        # Log file
+        $logFile = "TimeZoneUpdateLog_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
+        Add-Content -Path $logFile -Value "Time Zone Update Log - $(Get-Date)"
+        Add-Content -Path $logFile -Value "======================================`n"
+
+        # Perform update
+        foreach ($user in $usersToUpdate) {
+            Write-Host "Updating $($user.UserPrincipalName) to $desiredTimeZone" -ForegroundColor Cyan
+            Set-MailboxRegionalConfiguration -Identity $user.UserPrincipalName -TimeZone $desiredTimeZone
+
+            # Log change
+            Add-Content -Path $logFile -Value "Updated $($user.UserPrincipalName): $($user.CurrentTimeZone) -> $desiredTimeZone"
+        }
+
+        Write-Host "`nAll updates complete. Log saved to $logFile" -ForegroundColor Green
+    } else {
+        Write-Host "No changes made." -ForegroundColor Red
+    }
+}
+
+# Disconnect session
+Disconnect-ExchangeOnline
